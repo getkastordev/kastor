@@ -20,6 +20,7 @@ func sample() *state.File {
 		Serial:  6,
 		Targets: map[string]*state.TargetState{
 			"openai_assistants": {
+				Plugin: &state.PluginIdentity{Source: "example/test", Version: "0.1.0", Protocol: 1},
 				Resources: map[string]*state.Resource{
 					"agent.weather": {
 						ID:           "asst_123",
@@ -62,12 +63,12 @@ func TestLoadErrors(t *testing.T) {
 		{
 			name:    "future version is rejected, naming found and supported",
 			dir:     "testdata/future_version",
-			wantSub: []string{state.Filename, "version 3", "supports version 1"},
+			wantSub: []string{state.Filename, "version 3", "supports versions 1 and 2"},
 		},
 		{
 			name:    "missing version is rejected",
 			dir:     "testdata/version_missing",
-			wantSub: []string{state.Filename, "version 0", "supports version 1"},
+			wantSub: []string{state.Filename, "version 0", "supports versions 1 and 2"},
 		},
 	}
 	for _, tt := range tests {

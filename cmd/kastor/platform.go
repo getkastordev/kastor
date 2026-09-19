@@ -27,12 +27,13 @@ var providerFactories = map[string]func(*schema.Target) (provider.Provider, erro
 // platformJob is one reconcile unit: a platform target with its resolved
 // provider, sharing the module, graph, and state with its siblings.
 type platformJob struct {
-	job      *provider.Job
-	provider provider.Provider
-	close    func() error
+	job             *provider.Job
+	provider        provider.Provider
+	close           func() error
+	metadataPending *bool
 }
 
-// preparePlatform runs the shared front half of plan/apply/destroy:
+// preparePlatform runs the shared front half of plan/apply/destroy/doctor:
 // validate the module, select the platform targets, resolve their
 // providers, take the state lock, and load the state file. The returned
 // release function must be called (once) when the command is done.
@@ -68,8 +69,13 @@ func preparePlatform(ctx context.Context, stderr io.Writer, dir, targetName stri
 	if err != nil {
 		return nil, nil, errors.Join(err, closePlatformJobs(resolved), releaseState())
 	}
+	pending, err := bindStateOwnership(ctx, mod, st, resolved)
+	if err != nil {
+		return nil, nil, errors.Join(err, closePlatformJobs(resolved), releaseState())
+	}
 	for _, pj := range resolved {
 		pj.job.State = st
+		pj.metadataPending = &pending
 	}
 	release = func() error {
 		return errors.Join(closePlatformJobs(resolved), releaseState())

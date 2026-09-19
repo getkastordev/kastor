@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "serial": 4,
+  "targets": {
+    "claude_agents": {
+      "resources": {
+        "agent.minimal": {
+          "id": "agent_01Minimal",
+          "config": {
+            "description": null,
+            "mcp_servers": [],
+            "metadata": {"kastor_managed": "agent.minimal"},
+            "model": {"id": "claude-sonnet-4-5", "speed": "standard"},
+            "name": "minimal",
+            "skills": [],
+            "system": null,
+            "tools": []
+          }
+        }
+      }
+    }
+  }
+}

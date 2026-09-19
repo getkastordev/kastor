@@ -1,0 +1,3 @@
+agent "minimal" {
+  model = model.fast
+}

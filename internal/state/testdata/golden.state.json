@@ -1,8 +1,13 @@
 {
-  "version": 1,
+  "version": 2,
   "serial": 7,
   "targets": {
     "openai_assistants": {
+      "plugin": {
+        "source": "example/test",
+        "version": "0.1.0",
+        "protocol": 1
+      },
       "resources": {
         "agent.geocoder": {
           "id": "asst_456",

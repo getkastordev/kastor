@@ -143,10 +143,15 @@ State maps block addresses to remote IDs and the last-applied config:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "serial": 1,
   "targets": {
     "memory": {
+      "plugin": {
+        "source": "builtin/memory",
+        "version": "builtin",
+        "protocol": 0
+      },
       "resources": {
         "agent.weather": {
           "id": "mem-3",
@@ -161,3 +166,33 @@ State maps block addresses to remote IDs and the last-applied config:
 The resource unit is currently the agent. Models, prompts, and tools are folded into the agent config for platform reconciliation.
 
 Do not commit `kastor.state.json`. It is environment-specific.
+
+### Plugin ownership and migration
+
+State v2 records each platform target's canonical plugin source and resolved
+version/protocol. A supported version upgrade or local plugin alias rename for
+the same source does not change ownership. Kastor rejects a different source
+while resources remain managed. Destroy with the original owner before
+switching sources.
+
+Kastor reads v1 state in memory using your explicit `target.plugin` and
+`required_plugins` declarations. Keep the original target labels. A managed v1
+Claude target named `claude_agents` must select
+`github.com/getkastordev/kastor-anthropic`; missing declarations are errors.
+Other v1 labels rely on your declaration of the original source because v1 did
+not record it. The built-in `memory` target needs no plugin declaration and
+records `builtin/memory`. Its remote objects remain ephemeral.
+
+Back up the state, module files, and plugin lock before migrating; Kastor does
+not create an automatic backup. Plan and doctor never persist a migration.
+Apply writes v2 with each successful state mutation, or once after a successful
+no-op apply. Destroy writes after each successful deletion. A format upgrade
+alone causes no remote changes, and preserves IDs, dependencies, and equivalent
+last-applied configs. All managed targets need ownership declarations, even
+when you select just one with `--target`.
+
+After a partial failure, keep the newest state and retry after fixing the
+failure. Do not restore a pre-migration backup over completed remote operations.
+Older v1-only binaries cannot read v2; only restore the old state and matching
+module/lock if no remote changes have occurred since the backup. Unknown future
+formats are rejected rather than rewritten.

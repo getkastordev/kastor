@@ -93,6 +93,14 @@ func Apply(ctx context.Context, p Provider, job *Job, plan *Plan, save func() er
 			applied++
 
 		case ActionNoop:
+			// The plan already compared both desired and last-applied config
+			// with the real remote using the provider's Diff. If both match,
+			// retain the recorded config, even if a legacy adapter wrote a
+			// different normalized representation. A format migration alone
+			// must not replace last-applied configuration.
+			if len(c.Drift) == 0 {
+				continue
+			}
 			refreshed, err := refreshStale(p, job, ts, c.Addr)
 			if err != nil {
 				return fail(c, err)

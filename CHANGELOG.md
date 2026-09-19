@@ -12,6 +12,14 @@ v0 exit criteria KAS-36 are met.
 
 ### Changed
 
+- Local state now writes format v2 with per-target canonical plugin ownership
+  and resolved version/protocol metadata (KAS-78). V1 migrates from explicit
+  declarations, with a built-in memory exception. Plan and doctor never persist
+  migrations; successful apply/destroy state mutations do, including a no-op
+  apply that only records metadata. Source changes with managed resources and
+  ambiguous migrations are rejected. Back up before migrating; v1-only binaries
+  cannot read v2. See [STATE_MIGRATION.md](STATE_MIGRATION.md).
+
 - Prepared the canonical core repository and Go module migration from
   `weirdGuy/kastor` to `getkastordev/kastor`. Go consumers must change imports
   and select a new-path core release; a GitHub redirect does not rewrite old
