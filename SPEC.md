@@ -373,8 +373,10 @@ target "production" {
 **Rules:**
 - `kastor.required_plugins` maps a module-local name to a stable `source` and a
   version constraint. Both strings are required and unknown fields are errors.
-  The local name is configuration syntax only; installation and state identity
-  use the source plus the selected locked version.
+  The local name is configuration syntax only. Installation selects a version;
+  state ownership uses the canonical source, with resolved version/protocol
+  recorded as metadata (§5.1). A compatible version upgrade is not a change
+  of provider identity.
 - `target.plugin` names one entry in `required_plugins`. A missing entry is a
   compile error listing the declared plugins. During the v0.2 migration window,
   an omitted selector is accepted as a deprecated compatibility form and the
@@ -555,14 +557,19 @@ Exit codes (all commands): 0 clean, 1 validation/codegen/plan/apply errors, 2 us
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "serial": 4,
   "targets": {
     "claude_agents": {
+      "plugin": {
+        "source": "github.com/getkastordev/kastor-anthropic",
+        "version": "0.1.0",
+        "protocol": 1
+      },
       "resources": {
         "agent.weather": {
           "id": "agent-abc123",
-          "config": { "model": { "id": "gpt-4o-mini", "provider": "openai" } },
+          "config": { "model": { "id": "claude-sonnet-4-5", "provider": "anthropic" } },
           "dependencies": ["agent.geocoder"]
         }
       }
@@ -572,7 +579,12 @@ Exit codes (all commands): 0 clean, 1 validation/codegen/plan/apply errors, 2 us
 ```
 
 **Rules:**
-- `version` is the state format version. Unknown versions are rejected, never guessed at (same stance as language versioning, §9). `serial` increases by one on every write, ordering snapshots.
+- `version` is the state format version. Core reads v1 and v2, writes v2, and rejects all other versions without rewriting them. `serial` increases by one on every successful atomic write, ordering snapshots; failed writes do not advance it.
+- Each managed target records `plugin.source`, the canonical implementation owner, and its resolved `version` and `protocol`. Executable metadata comes from the validated handshake of the resolved binary (normally the lock-selected artifact; development overrides and the no-lock PATH fallback record the actual resolved version). A plugin alias rename or a supported version upgrade for the **same source** does not change ownership or itself produce a remote operation. The existing resolver still enforces the module version constraint and supported protocol. The provider remains responsible for config compatibility.
+- A different source while resources remain managed is an error before lifecycle calls, including `destroy` and `doctor`. There is no source-rebinding command. Destroy using the original owner before switching; empty targets are dropped on write. Managed targets removed from the module, or changed to codegen, require restoring the original platform declaration. These checks cover all managed targets, even with `--target`, because state writes replace the whole snapshot.
+- **v1 migration** binds each managed target to its explicit `target.plugin` / `required_plugins` declaration, preserving labels, remote IDs, dependencies, and last-applied configs. A missing selector/declaration is ambiguous and rejected. The legacy `claude_agents` label must select `github.com/getkastordev/kastor-anthropic`. For other explicit target labels, the operator's declaration asserts the original source: v1 contains no source to independently verify. The built-in selector-free `memory` target is the exception: it binds to `builtin/memory`, version `builtin`, protocol `0`; an explicit external plugin cannot reinterpret v1 memory resources. Its remote store remains ephemeral, so later remote-missing drift is real, not migration churn.
+- New state from in-process compatibility adapters records their canonical source and version `builtin`, protocol `0` (Claude uses the same official source as its executable successor). Existing non-memory v1 state must first adopt explicit plugin declarations; the legacy selector alone cannot migrate it.
+- Migration and metadata refresh happen in memory during preparation. **Plan and doctor never persist them.** Apply persists them with the first successful resource operation or stale-config refresh, or once after a successful no-op apply. Destroy persists them with each successful deletion. Failure before any successful state mutation leaves the original file untouched; a successful prefix of a partial apply/destroy is saved as v2. An empty destroy does not write. A format-only upgrade never creates, updates, or deletes remote objects, and equivalent legacy normalized configs are retained using the provider's pure `Diff` comparison.
 - The **unit of remote management is the agent**: each `agent` block is one resource; its model, prompt, and tools are folded into the resource's config (the "agent closure"). Standalone remote tool/prompt objects are deferred.
 - `config` is the **full last-applied config** (canonical JSON, not a hash) — drift reports can then name the attributes that changed without refetching anything.
 - **Credential references are stored; credential values never are.** A resource's `config` records an `auth.ref` (§3.6) verbatim — `env://AIRTABLE_TOKEN`, not the token behind it. Nothing in `kastor.state.json` is a secret, and no plan rendering of it can leak one. This is what keeps the state file safe to hand to a colleague while debugging, and it holds for every resolver added later.
@@ -580,7 +592,14 @@ Exit codes (all commands): 0 clean, 1 validation/codegen/plan/apply errors, 2 us
 - Serialization is deterministic: stable key order, byte-identical output for equal state. Writes are atomic (temp file + rename) and happen **after every applied operation**, not once at the end — an interrupted apply loses nothing, and a re-run plans exactly the remainder.
 - Like Terraform state, the file is environment-specific and is not meant to be committed.
 
-**Locking:** plan/apply/destroy take a local lock file (`.kastor.state.lock`) for their duration; contention errors name the holding pid and the recovery step (delete the stale file). Remote state backends and remote locking are deferred (§7).
+**Locking:** plan/apply/destroy/doctor take a local lock file (`.kastor.state.lock`) while inspecting or mutating state; contention errors name the holding pid and the recovery step (delete the stale file only after confirming the process has stopped). Remote state backends and remote locking are deferred (§7).
+
+**Backup and recovery:** migration does not make an automatic backup. Back up the
+state, module declarations, and plugin lock before the first mutating command.
+Older v1-only binaries cannot read v2. Never restore an old snapshot over a
+successful partial apply: it would lose the IDs and progress already recorded.
+See [STATE_MIGRATION.md](STATE_MIGRATION.md) for the pre-release procedure and
+failure recovery.
 
 ### 5.2 Plan/apply semantics
 

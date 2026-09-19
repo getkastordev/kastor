@@ -129,6 +129,7 @@ func TestApplyNoopRefreshStoresProviderNormalizedConfig(t *testing.T) {
 			Addr:   "agent.geocoder",
 			Action: provider.ActionNoop,
 			ID:     "fake-1",
+			Drift:  []provider.AttrDiff{{Path: "raw", Old: nil, New: true}},
 		}},
 	}
 

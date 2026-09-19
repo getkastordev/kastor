@@ -16,12 +16,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 )
 
-// Version is the state file format version this kastor reads and writes.
-// Load rejects any other version rather than misinterpreting it (the same
-// stance SPEC.md §9 takes on language versioning).
-const Version = 1
+// Version is the current write format. Version 1 can be read, but must have
+// ownership resolved from the module before it can be written as version 2.
+const Version = 2
 
 // Filename is the state file's name, fixed at the module root.
 const Filename = "kastor.state.json"
@@ -36,7 +36,72 @@ type File struct {
 
 // TargetState is the managed resource set of one platform target.
 type TargetState struct {
+	Plugin    *PluginIdentity      `json:"plugin,omitempty"`
 	Resources map[string]*Resource `json:"resources"`
+}
+
+// PluginIdentity records the implementation, not the module-local plugin alias.
+// Version and Protocol describe the resolved implementation; only Source is
+// ownership. In-process implementations use version "builtin", protocol 0.
+type PluginIdentity struct {
+	Source   string `json:"source"`
+	Version  string `json:"version"`
+	Protocol int    `json:"protocol"`
+}
+
+// MemorySource is reserved for the ephemeral in-process memory platform.
+const MemorySource = "builtin/memory"
+
+func (p *PluginIdentity) valid() bool {
+	if p == nil || p.Source == "" || p.Version == "" {
+		return false
+	}
+	if p.Version == "builtin" {
+		return p.Protocol == 0
+	}
+	return p.Protocol > 0
+}
+
+// Bind resolves ownership in memory only. Callers supply verified metadata and
+// must resolve every managed v1 target, even for a targeted operation, because
+// the next atomic snapshot covers the entire file. Validation is all-or-nothing.
+func (f *File) Bind(owners map[string]PluginIdentity) error {
+	if f.Version != 1 && f.Version != Version {
+		return fmt.Errorf("%s: unsupported state version %d", Filename, f.Version)
+	}
+	names := make([]string, 0, len(f.Targets))
+	for name := range f.Targets {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		ts := f.Targets[name]
+		if ts == nil {
+			return fmt.Errorf("%s: target.%s: null target state; expected a resource set", Filename, name)
+		}
+		if len(ts.Resources) == 0 {
+			continue
+		}
+		owner, ok := owners[name]
+		if !ok || !owner.valid() {
+			return fmt.Errorf("%s: target.%s: unresolved plugin ownership; restore the target and declare its explicit plugin before migration or reconciliation", Filename, name)
+		}
+		if f.Version == Version && !ts.Plugin.valid() {
+			return fmt.Errorf("%s: target.%s: missing plugin identity in v2 state; restore a valid state backup", Filename, name)
+		}
+		if ts.Plugin != nil && ts.Plugin.Source != owner.Source {
+			return fmt.Errorf("%s: target.%s: plugin source %q does not match managed owner %q; restore the original plugin declaration, or destroy with the original owner before switching", Filename, name, owner.Source, ts.Plugin.Source)
+		}
+	}
+	for name, owner := range owners {
+		if !owner.valid() {
+			return fmt.Errorf("%s: target.%s: incomplete resolved plugin identity", Filename, name)
+		}
+	}
+	for name, owner := range owners {
+		f.Target(name).Plugin = &owner
+	}
+	return nil
 }
 
 // Resource records one managed remote resource: the remote ID it maps to,
@@ -66,11 +131,16 @@ func Load(dir string) (*File, error) {
 	if err := json.Unmarshal(data, &f); err != nil {
 		return nil, fmt.Errorf("%s: parsing state file: %w", path, err)
 	}
-	if f.Version != Version {
-		return nil, fmt.Errorf("%s: state file version %d is not supported by this kastor (supports version %d)", path, f.Version, Version)
+	if f.Version != 1 && f.Version != Version {
+		return nil, fmt.Errorf("%s: state file version %d is not supported by this kastor (supports versions 1 and %d)", path, f.Version, Version)
 	}
 	if f.Targets == nil {
 		f.Targets = map[string]*TargetState{}
+	}
+	for name, ts := range f.Targets {
+		if ts == nil || (f.Version == Version && len(ts.Resources) > 0 && !ts.Plugin.valid()) {
+			return nil, fmt.Errorf("%s: target.%s: invalid target ownership; expected a resource set with plugin identity in v2", path, name)
+		}
 	}
 	return &f, nil
 }
@@ -80,12 +150,18 @@ func Load(dir string) (*File, error) {
 // with no resources are dropped from the output — an empty entry carries no
 // information and would accumulate forever.
 func (f *File) Write(dir string) error {
-	f.Version = Version
-	f.Serial++
-
-	out := &File{Version: f.Version, Serial: f.Serial, Targets: map[string]*TargetState{}}
+	if f.Version != 1 && f.Version != Version {
+		return fmt.Errorf("%s: unsupported state version %d", Filename, f.Version)
+	}
+	out := &File{Version: Version, Serial: f.Serial + 1, Targets: map[string]*TargetState{}}
 	for name, ts := range f.Targets {
+		if ts == nil {
+			return fmt.Errorf("%s: target.%s: null target state", Filename, name)
+		}
 		if len(ts.Resources) > 0 {
+			if !ts.Plugin.valid() {
+				return fmt.Errorf("%s: target.%s: unresolved plugin ownership; cannot write v2 state", Filename, name)
+			}
 			out.Targets[name] = ts
 		}
 	}
@@ -104,6 +180,8 @@ func (f *File) Write(dir string) error {
 	if err := os.Rename(tmp, path); err != nil {
 		return fmt.Errorf("writing state file: %w", err)
 	}
+	f.Version = out.Version
+	f.Serial = out.Serial
 	return nil
 }
 

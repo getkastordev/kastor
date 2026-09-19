@@ -78,6 +78,7 @@ func runApply(ctx context.Context, stdout, stderr io.Writer, dir, targetName str
 			if err := pj.job.State.Write(dir); err != nil {
 				return withExitCode(2, err)
 			}
+			*pj.metadataPending = false
 			return nil
 		}
 
@@ -101,6 +102,13 @@ func runApply(ctx context.Context, stdout, stderr io.Writer, dir, targetName str
 		renderPlan(stdout, plan)
 		if _, err := provider.Apply(ctx, pj.provider, pj.job, plan, save); err != nil {
 			return err
+		}
+		// A successful no-op apply can commit only ownership metadata. Plan
+		// and doctor never reach this mutation path, nor does a failed apply.
+		if *pj.metadataPending {
+			if err := save(); err != nil {
+				return err
+			}
 		}
 		if create, update, del, _ := plan.Counts(); create+update+del > 0 {
 			fmt.Fprintf(stdout, "\nApplied target.%s: %d created, %d updated, %d deleted.\n", name, create, update, del)
