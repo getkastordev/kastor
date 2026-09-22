@@ -1,6 +1,3 @@
-> [!TIP]
-> BIG Release is coming September 18th
-
 # Kastor
 
 **Kastor is a source-of-truth layer for AI agents.**
